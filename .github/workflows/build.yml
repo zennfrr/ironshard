@@ -1,0 +1,166 @@
+name: Build IRONSHARD
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Use permanent signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+      - name: Build APK
+        run: |
+          GAME=$(ls *.html | head -n 1)
+          echo "Using game file: $GAME"
+          mkdir app && cp "$GAME" app/index-src.html && cd app
+          cat > make-icon.js <<'JSEOF'
+          // draws the OBSIDYNE ring-and-slash logo as a PNG (no dependencies)
+          const zlib = require('zlib'), fs = require('fs');
+          const size = parseInt(process.argv[2] || '512', 10), out = process.argv[3] || 'icon.png';
+          const S = size, cx = S / 2, cy = S / 2, R = S * 0.30, th = Math.max(2, S * 0.075), a = R;
+          const raw = Buffer.alloc((S * 4 + 1) * S);
+          for (let y = 0; y < S; y++) {
+            raw[y * (S * 4 + 1)] = 0;
+            for (let x = 0; x < S; x++) {
+              const px = x + 0.5 - cx, py = y + 0.5 - cy, d = Math.hypot(px, py), t = y / S;
+              let r = 13 + 9 * t * 0.6, g = 11 + 8 * t * 0.6, b = 18 + 12 * t * 0.6;
+              const ringD = Math.abs(d - R);
+              const proj = Math.max(-a, Math.min(a, (px - py) * Math.SQRT1_2));
+              const slashD = Math.hypot(proj * Math.SQRT1_2 - px, -proj * Math.SQRT1_2 - py);
+              const m = Math.min(ringD, slashD);
+              const glow = Math.exp(-Math.max(0, m - th / 2) / (S * 0.045)) * 0.6;
+              r += (255 - r) * glow; g += (40 - g) * glow; b += (40 - b) * glow;
+              const core = Math.max(0, Math.min(1, th / 2 - m + 0.5));
+              r += (255 - r) * core; g += (48 - g) * core; b += (48 - b) * core;
+              const o = y * (S * 4 + 1) + 1 + x * 4;
+              raw[o] = r | 0; raw[o + 1] = g | 0; raw[o + 2] = b | 0; raw[o + 3] = 255;
+            }
+          }
+          const table = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c; });
+          const crc = buf => { let c = -1; for (const v of buf) c = table[(c ^ v) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+          const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+          const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(S, 0); ihdr.writeUInt32BE(S, 4); ihdr[8] = 8; ihdr[9] = 6;
+          fs.writeFileSync(out, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
+          JSEOF
+          npm init -y
+          npm install @capacitor/core@7 @capacitor/android@7
+          npm install -D @capacitor/cli@7
+          mkdir www && mv index-src.html www/index.html
+          npx cap init IRONSHARD com.ironshard.game --web-dir www
+          npx cap add android
+          RES=android/app/src/main/res
+          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+            n=${d%%:*}; s=${d##*:}
+            node make-icon.js $s $RES/mipmap-$n/ic_launcher.png
+            cp $RES/mipmap-$n/ic_launcher.png $RES/mipmap-$n/ic_launcher_round.png
+            node make-icon.js $((s * 9 / 4)) $RES/mipmap-$n/ic_launcher_foreground.png
+          done
+          rm -rf $RES/mipmap-anydpi-v26
+          cd android && chmod +x gradlew && ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/IRONSHARD.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: IRONSHARD.apk
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build EXE
+        shell: bash
+        run: |
+          GAME=$(ls *.html | head -n 1)
+          echo "Using game file: $GAME"
+          mkdir app && cp "$GAME" app/index.html && cd app
+          cat > make-icon.js <<'JSEOF'
+          // draws the OBSIDYNE ring-and-slash logo as a PNG (no dependencies)
+          const zlib = require('zlib'), fs = require('fs');
+          const size = parseInt(process.argv[2] || '512', 10), out = process.argv[3] || 'icon.png';
+          const S = size, cx = S / 2, cy = S / 2, R = S * 0.30, th = Math.max(2, S * 0.075), a = R;
+          const raw = Buffer.alloc((S * 4 + 1) * S);
+          for (let y = 0; y < S; y++) {
+            raw[y * (S * 4 + 1)] = 0;
+            for (let x = 0; x < S; x++) {
+              const px = x + 0.5 - cx, py = y + 0.5 - cy, d = Math.hypot(px, py), t = y / S;
+              let r = 13 + 9 * t * 0.6, g = 11 + 8 * t * 0.6, b = 18 + 12 * t * 0.6;
+              const ringD = Math.abs(d - R);
+              const proj = Math.max(-a, Math.min(a, (px - py) * Math.SQRT1_2));
+              const slashD = Math.hypot(proj * Math.SQRT1_2 - px, -proj * Math.SQRT1_2 - py);
+              const m = Math.min(ringD, slashD);
+              const glow = Math.exp(-Math.max(0, m - th / 2) / (S * 0.045)) * 0.6;
+              r += (255 - r) * glow; g += (40 - g) * glow; b += (40 - b) * glow;
+              const core = Math.max(0, Math.min(1, th / 2 - m + 0.5));
+              r += (255 - r) * core; g += (48 - g) * core; b += (48 - b) * core;
+              const o = y * (S * 4 + 1) + 1 + x * 4;
+              raw[o] = r | 0; raw[o + 1] = g | 0; raw[o + 2] = b | 0; raw[o + 3] = 255;
+            }
+          }
+          const table = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c; });
+          const crc = buf => { let c = -1; for (const v of buf) c = table[(c ^ v) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+          const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+          const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(S, 0); ihdr.writeUInt32BE(S, 4); ihdr[8] = 8; ihdr[9] = 6;
+          fs.writeFileSync(out, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
+          JSEOF
+          node make-icon.js 512 icon.png
+          cat > main.js <<'EOF2'
+          const { app, BrowserWindow } = require('electron');
+          app.whenReady().then(() => {
+            const w = new BrowserWindow({ width: 1280, height: 800, autoHideMenuBar: true, backgroundColor: '#07090d', title: 'IRONSHARD', icon: __dirname + '/icon.png' });
+            w.loadFile('index.html');
+          });
+          app.on('window-all-closed', () => app.quit());
+          EOF2
+          cat > package.json <<'EOF2'
+          {
+            "name": "ironshard",
+            "version": "1.0.0",
+            "description": "IRONSHARD",
+            "author": "IRONSHARD",
+            "main": "main.js",
+            "build": {
+              "appId": "com.ironshard.game",
+              "productName": "IRONSHARD",
+              "files": ["index.html", "main.js", "icon.png"],
+              "win": { "target": "portable", "icon": "icon.png" }
+            }
+          }
+          EOF2
+          npm install -D electron@33 electron-builder@25
+          npx electron-builder --win portable --publish never
+          cp dist/*.exe "$GITHUB_WORKSPACE/IRONSHARD.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: IRONSHARD.exe
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: IRONSHARD
+          files: out/*
+          make_latest: true
