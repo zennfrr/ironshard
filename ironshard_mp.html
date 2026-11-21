@@ -2151,6 +2151,26 @@ function drawOthers(vis) {
   }
   ctx.globalAlpha = 1;
 }
+// arrows at the screen edge pointing to other pilots (rivals in PvP, teammates in Group PvE)
+function drawPlayerArrows(sc) {
+  for (const o of others.values()) {
+    if (o.st !== 'play' || o.dead) continue;
+    const ex = (o.rx - camX) * sc + W / 2, ey = (o.ry - camY) * sc + H / 2;
+    if (ex > 0 && ex < W && ey > 0 && ey < H) continue;
+    const a = Math.atan2(ey - H / 2, ex - W / 2);
+    // sit on an oval inside the screen edge so the arrow stays clear of the HUD and touch buttons
+    const px = W / 2 + Math.cos(a) * (W / 2 - 46), py = H / 2 + Math.sin(a) * (H / 2 - 70);
+    ctx.save(); ctx.translate(px, py); ctx.rotate(a);
+    ctx.fillStyle = o.col; ctx.strokeStyle = MODE === 'pvp' ? '#ff5050' : '#ffffff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-9, -11); ctx.lineTo(-9, 11); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    const dm = Math.round(Math.hypot(o.rx - P.x, o.ry - P.y) / 10);
+    const tx = px - Math.cos(a) * 34, ty = py - Math.sin(a) * 26;
+    ctx.font = '800 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = '#000c';
+    const label = o.nm + ' ' + dm + 'm';
+    ctx.strokeText(label, tx, ty + 4); ctx.fillStyle = o.col; ctx.fillText(label, tx, ty + 4);
+  }
+}
 
 // ---------- update ----------
 function update(dt) {
@@ -2609,6 +2629,7 @@ function draw() {
     ctx.globalAlpha = a; ctx.font = '800 15px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = '#ff6a6a';
     ctx.fillText('OBSIDYNE HQ is nearby. Follow the red arrow and bring it down!', W / 2, H * 0.47); ctx.globalAlpha = 1;
   }
+  if (others.size) drawPlayerArrows(sc);
   // offscreen arrows
   for (const e of enemies) {
     const ex = (e.x - camX) * sc + W / 2, ey = (e.y - camY) * sc + H / 2;
